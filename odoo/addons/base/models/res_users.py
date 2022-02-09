@@ -997,20 +997,27 @@ class UsersImplied(models.Model):
                 values['groups_id'] = type(self).groups_id.convert_to_write(gs, user)
         return super(UsersImplied, self).create(vals_list)
 
+    def _clear_demoted_user_access(self, values, users_before):
+        users_to_demote = users_before.filtered(
+            lambda u: not u.has_group('base.group_user')
+        )
+        if users_to_demote:
+            vals = {'groups_id': [(5, 0, 0)] + values['groups_id']}
+            super(UsersImplied, users_to_demote).write(vals)
+        return users_to_demote
+
     def write(self, values):
         users_before = self.filtered(lambda u: u.has_group('base.group_user'))
         res = super(UsersImplied, self).write(values)
         if values.get('groups_id'):
-            # add implied groups for all users
+            self._clear_demoted_user_access(values, users_before)
+            users_batch = defaultdict(self.browse)
             for user in self:
-                if not user.has_group('base.group_user') and user in users_before:
-                    # if we demoted a user, we strip him of all its previous privileges
-                    # (but we should not do it if we are simply adding a technical group to a portal user)
-                    vals = {'groups_id': [(5, 0, 0)] + values['groups_id']}
-                    super(UsersImplied, user).write(vals)
-                gs = set(concat(g.trans_implied_ids for g in user.groups_id))
+                users_batch[user.groups_id] | user
+            for groups, users in users_batch.items():
+                gs = set(concat(g.trans_implied_ids for g in groups))
                 vals = {'groups_id': [(4, g.id) for g in gs]}
-                super(UsersImplied, user).write(vals)
+                super(UsersImplied, users).write(vals)
         return res
 
 #
